@@ -1,0 +1,468 @@
+local CoreGui, Players, RunService, TeleportService, Lighting, Stats, Workspace, TextChatService, ReplicatedStorage, MarketPlaceService, UserInputService = game:GetService("CoreGui"), game:GetService("Players"), game:GetService("RunService"), game:GetService("TeleportService"), game:GetService("Lighting"), game:GetService("Stats"), game:GetService("Workspace"), game:GetService("TextChatService"), game:GetService("ReplicatedStorage"), game:GetService("MarketplaceService"), game:GetService("UserInputService")
+local LP = Players.LocalPlayer
+local Camera = Workspace.CurrentCamera
+
+if CoreGui:FindFirstChild("GBHub") then CoreGui.GBHub:Destroy() end
+
+local cfg = {
+    Hitbox = false, HitTeam = true, HitFriend = true, Size = 10, ColorIdx = 1, 
+    EspBox = false, EspName = false, EspDist = false, EspHP = false, EspTeam = true, EspFriend = true, EspBoxAlphaIdx = 2, 
+    TarName = "", Follow = false, FullBright = false, ShowStats = false, FOV = 70, CustomFOV = false, 
+    TeamMsg = "", WhisperMsg = "", TargetWhisperMsg = "", WhisperTargetPlayer = "",
+    Aimbot = false, AimTeam = true, AimFriend = true, AimPartIdx = 1, AimFOV = 150, ShowAimFOV = false
+}
+local CustomTarget, Colors, ColorNames = {}, {Color3.fromRGB(255, 0, 0), Color3.fromRGB(0, 120, 255), Color3.fromRGB(0, 255, 100), Color3.fromRGB(255, 255, 0)}, {"Red", "Blue", "Green", "Yellow"}
+local AlphaValues, AlphaNames = {0.95, 0.85, 0.65}, {"95%", "85%", "65%"}
+local AimParts = {"Head", "HumanoidRootPart"}
+local AimPartNames = {"Head", "Torso"}
+
+-- 🎨 Custom Theme Colors
+local C_LightCyan = Color3.fromHex("#b2ebf2")
+local C_BrightBlue = Color3.fromHex("#29b6f6")
+local C_Periwinkle = Color3.fromHex("#91a7ff")
+local C_GreenStatus = Color3.fromHex("#00E676") -- 🟢 สีเขียวสำหรับปุ่มสถานะ Players
+
+local ThemeColors = {
+    Main = Color3.fromRGB(12, 16, 26),
+    Side = Color3.fromRGB(12, 16, 26),
+    Nav = Color3.fromRGB(18, 26, 42),
+    Box = Color3.fromRGB(18, 24, 38)
+}
+
+local function IsSameTeam(p) return p and ((p.Team and LP.Team and p.Team == LP.Team) or p.TeamColor == LP.TeamColor) end
+local function Corner(o, r) Instance.new("UICorner", o).CornerRadius = UDim.new(0, r or 6) end
+
+-- Drawing FOV
+local FOVCircle = Drawing.new("Circle")
+FOVCircle.Color = C_BrightBlue
+FOVCircle.Thickness = 1.5
+FOVCircle.Filled = false
+FOVCircle.Transparency = 1
+FOVCircle.Visible = false
+
+-- 💬 Chat Switcher System (ปรับแก้ไขให้ส่งคำสั่งติด 100%)
+local function SwitchToTeamChat()
+    pcall(function()
+        if TextChatService.ChatVersion == Enum.ChatVersion.TextChatService then
+            local teamChannel = TextChatService.TextChannels:FindFirstChild("RBXTeam")
+            local chatWindow = LP.PlayerGui:FindFirstChild("Chat") or TextChatService
+            if teamChannel then
+                -- ส่งข้อความสลับเข้า Team Chat
+                teamChannel:SendAsync("")
+                local general = TextChatService.TextChannels:FindFirstChild("RBXGeneral")
+                if general then general:SendAsync("/team") end
+            end
+        else 
+            ReplicatedStorage.DefaultChatSystemChatEvents.SayMessageRequest:FireServer("/team", "All")
+        end
+    end)
+end
+
+local function SwitchToWhisper(targetName)
+    if not targetName or targetName == "" then return end
+    pcall(function()
+        if TextChatService.ChatVersion == Enum.ChatVersion.TextChatService then
+            local general = TextChatService.TextChannels:FindFirstChild("RBXGeneral")
+            if general then general:SendAsync("/w " .. targetName) end
+        else 
+            ReplicatedStorage.DefaultChatSystemChatEvents.SayMessageRequest:FireServer("/w " .. targetName, "All")
+        end
+    end)
+end
+
+-- GUI Main Framework
+local Gui = Instance.new("ScreenGui", CoreGui) Gui.Name = "GBHub"
+
+local Btn = Instance.new("TextButton", Gui) 
+Btn.Size, Btn.Position, Btn.Text, Btn.BackgroundColor3, Btn.TextColor3, Btn.Draggable = UDim2.new(0, 45, 0, 45), UDim2.new(0.03, 0, 0.15, 0), "GH", ThemeColors.Main, C_LightCyan, true
+Btn.Font, Btn.TextSize = Enum.Font.GothamBold, 16 Corner(Btn, 22)
+local BtnStroke = Instance.new("UIStroke", Btn) BtnStroke.Color = C_BrightBlue BtnStroke.Thickness = 1
+
+local StatsLabel = Instance.new("TextLabel", Gui)
+StatsLabel.Size, StatsLabel.Position, StatsLabel.BackgroundColor3, StatsLabel.BackgroundTransparency, StatsLabel.TextColor3, StatsLabel.Font, StatsLabel.TextSize, StatsLabel.Visible = UDim2.new(0, 170, 0, 32), UDim2.new(0, 15, 1, -45), ThemeColors.Main, 0.2, C_LightCyan, Enum.Font.GothamBold, 13, false
+Corner(StatsLabel, 6)
+local StatsStroke = Instance.new("UIStroke", StatsLabel) StatsStroke.Color = C_Periwinkle StatsStroke.Thickness = 1
+
+local Main = Instance.new("Frame", Gui) Main.Size, Main.Position, Main.BackgroundColor3, Main.Draggable, Main.Active = UDim2.new(0, 500, 0, 310), UDim2.new(0.5, -250, 0.5, -155), ThemeColors.Main, true, true
+Corner(Main, 10)
+local MainStroke = Instance.new("UIStroke", Main) MainStroke.Color = C_Periwinkle MainStroke.Thickness = 1.5
+Btn.MouseButton1Click:Connect(function() Main.Visible = not Main.Visible end)
+
+local Nav = Instance.new("Frame", Main) Nav.Size, Nav.BackgroundColor3 = UDim2.new(1, 0, 0, 38), ThemeColors.Nav Corner(Nav, 10)
+local Title = Instance.new("TextLabel", Nav) Title.Size, Title.Position, Title.Text, Title.TextColor3, Title.BackgroundTransparency, Title.Font, Title.TextSize, Title.TextXAlignment = UDim2.new(1, -20, 1, 0), UDim2.new(0, 15, 0, 0), "GB HUB", C_LightCyan, 1, Enum.Font.GothamBold, 15, Enum.TextXAlignment.Left
+
+-- Side Bar
+local SideScroll = Instance.new("ScrollingFrame", Main) 
+SideScroll.Size, SideScroll.Position, SideScroll.BackgroundColor3, SideScroll.CanvasSize, SideScroll.AutomaticCanvasSize, SideScroll.ScrollBarThickness = UDim2.new(0, 115, 1, -44), UDim2.new(0, 6, 0, 42), ThemeColors.Side, UDim2.new(0, 0, 0, 0), "Y", 3
+SideScroll.ScrollBarImageColor3 = C_BrightBlue
+
+local SideLayout = Instance.new("UIListLayout", SideScroll) SideLayout.Padding, SideLayout.SortOrder = UDim.new(0, 5), Enum.SortOrder.LayoutOrder
+local SidePadding = Instance.new("UIPadding", SideScroll) SidePadding.PaddingRight = UDim.new(0, 4)
+
+local Content = Instance.new("Frame", Main) Content.Size, Content.Position, Content.BackgroundTransparency = UDim2.new(1, -132, 1, -44), UDim2.new(0, 126, 0, 42), 1
+
+local Tabs = {}
+local tabOrder = 0
+local function AddTab(name)
+    tabOrder = tabOrder + 1
+    local Page = Instance.new("Frame", Content) Page.Size, Page.BackgroundTransparency, Page.Visible = UDim2.new(1, 0, 1, 0), 1, false
+    local Scroll = Instance.new("ScrollingFrame", Page) Scroll.Size, Scroll.BackgroundTransparency, Scroll.AutomaticCanvasSize, Scroll.ScrollBarThickness = UDim2.new(1, 0, 1, 0), 1, "Y", 3
+    Scroll.ScrollBarImageColor3 = C_Periwinkle
+    Instance.new("UIListLayout", Scroll).Padding = UDim.new(0, 5)
+    
+    local TabBtn = Instance.new("TextButton", SideScroll) 
+    TabBtn.Size, TabBtn.Text, TabBtn.LayoutOrder, TabBtn.BackgroundColor3, TabBtn.TextColor3, TabBtn.Font, TabBtn.TextSize = UDim2.new(1, 0, 0, 30), name, tabOrder, ThemeColors.Box, C_Periwinkle, Enum.Font.GothamBold, 13
+    Corner(TabBtn, 5)
+
+    -- 🖼️ ใส่ UIStroke ให้กับกรอบของปุ่มแท็บ (ไม่ได้ใส่ขอบที่ตัวหนังสือ)
+    local TabStroke = Instance.new("UIStroke", TabBtn) 
+    TabStroke.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
+    TabStroke.Color, TabStroke.Thickness = Color3.fromRGB(35, 45, 65), 1
+
+    TabBtn.MouseButton1Click:Connect(function()
+        for _, v in pairs(Tabs) do 
+            v.Page.Visible = false
+            v.Btn.BackgroundColor3 = ThemeColors.Box
+            v.Btn.TextColor3 = C_Periwinkle
+            v.Stroke.Color = Color3.fromRGB(35, 45, 65)
+            v.Stroke.Thickness = 1
+        end
+        Page.Visible = true
+        TabBtn.BackgroundColor3 = ThemeColors.Nav
+        TabBtn.TextColor3 = C_LightCyan
+        TabStroke.Color = C_BrightBlue -- ขอบกรอบของปุ่มแท็บสว่างขึ้นเมื่อเลือก
+        TabStroke.Thickness = 1.5
+    end)
+    Tabs[name] = {Page = Page, Scroll = Scroll, Btn = TabBtn, Stroke = TabStroke}
+    return Scroll, Page
+end
+
+local function AddBtn(tab, text, func)
+    local b = Instance.new("TextButton", tab) b.Size, b.Text, b.BackgroundColor3, b.TextColor3 = UDim2.new(1, -6, 0, 34), text, ThemeColors.Box, C_LightCyan Corner(b)
+    b.Font, b.TextSize = Enum.Font.GothamBold, 13
+    local s = Instance.new("UIStroke", b) s.ApplyStrokeMode = Enum.ApplyStrokeMode.Border s.Color = Color3.fromRGB(35, 45, 65) s.Thickness = 1
+    b.MouseButton1Click:Connect(function() pcall(func) end)
+    return b
+end
+
+local function AddToggle(tab, text, key, callback)
+    local f = Instance.new("Frame", tab) f.Size, f.BackgroundColor3 = UDim2.new(1, -6, 0, 34), ThemeColors.Box Corner(f)
+    local s = Instance.new("UIStroke", f) s.ApplyStrokeMode = Enum.ApplyStrokeMode.Border s.Color = Color3.fromRGB(35, 45, 65) s.Thickness = 1
+    local l = Instance.new("TextLabel", f) l.Size, l.Position, l.Text, l.TextColor3, l.BackgroundTransparency, l.TextXAlignment = UDim2.new(0.7, 0, 1, 0), UDim2.new(0, 8, 0, 0), text, C_LightCyan, 1, Enum.TextXAlignment.Left l.Font, l.TextSize = Enum.Font.GothamBold, 13
+    local sw = Instance.new("TextButton", f) sw.Size, sw.Position, sw.Text, sw.BackgroundColor3 = UDim2.new(0, 34, 0, 20), UDim2.new(1, -40, 0.5, -10), "", cfg[key] and C_BrightBlue or Color3.fromRGB(35, 45, 65) Corner(sw, 10)
+    sw.MouseButton1Click:Connect(function() 
+        cfg[key] = not cfg[key] 
+        sw.BackgroundColor3 = cfg[key] and C_BrightBlue or Color3.fromRGB(35, 45, 65) 
+        if callback then callback(cfg[key]) end
+    end)
+end
+
+local function AddBox(tab, ph, func)
+    local f = Instance.new("Frame", tab) f.Size, f.BackgroundColor3 = UDim2.new(1, -6, 0, 34), ThemeColors.Box Corner(f)
+    local s = Instance.new("UIStroke", f) s.ApplyStrokeMode = Enum.ApplyStrokeMode.Border s.Color = Color3.fromRGB(35, 45, 65) s.Thickness = 1
+    local tb = Instance.new("TextBox", f) tb.Size, tb.Position, tb.PlaceholderText, tb.Text, tb.TextColor3, tb.BackgroundTransparency, tb.TextXAlignment = UDim2.new(1, -16, 1, 0), UDim2.new(0, 8, 0, 0), ph, "", Color3.fromRGB(255, 255, 255), 1, Enum.TextXAlignment.Left tb.Font, tb.TextSize = Enum.Font.GothamBold, 13
+    tb.PlaceholderColor3 = C_Periwinkle
+    tb.FocusLost:Connect(function() pcall(func, tb.Text) end)
+end
+
+-- Init Tabs (เรียง 1-9)
+local tProfileScroll, pProfile = AddTab("👤 Profile")
+local tMain, pMain = AddTab("🏠 Main")
+local tChat, pChat = AddTab("💬 Chat")
+local tBoost, pBoost = AddTab("⚡ Boosts")
+local tPlayers, pPlayers = AddTab("👥 Players")
+local tHitbox, pHitbox = AddTab("🥊 Hitbox")
+local tEsp, pEsp = AddTab("👁️ ESP")
+local tAimbot, pAimbot = AddTab("🎯 AimBot")
+local tTarget, pTarget = AddTab("🎯 Target")
+
+Tabs["👤 Profile"].Page.Visible = true
+Tabs["👤 Profile"].Btn.BackgroundColor3 = ThemeColors.Nav
+Tabs["👤 Profile"].Btn.TextColor3 = C_LightCyan
+Tabs["👤 Profile"].Stroke.Color = C_BrightBlue
+
+-- PROFILE TAB
+tProfileScroll.Visible = false
+local AvatarFrame = Instance.new("Frame", pProfile) AvatarFrame.Size, AvatarFrame.Position, AvatarFrame.BackgroundColor3 = UDim2.new(0, 80, 0, 80), UDim2.new(0, 10, 0, 10), ThemeColors.Box Corner(AvatarFrame, 40)
+local AvStroke = Instance.new("UIStroke", AvatarFrame) AvStroke.ApplyStrokeMode = Enum.ApplyStrokeMode.Border AvStroke.Color = C_Periwinkle AvStroke.Thickness = 1.5
+local AvatarImage = Instance.new("ImageLabel", AvatarFrame) AvatarImage.Size, AvatarImage.Position, AvatarImage.BackgroundTransparency = UDim2.new(1, 0, 1, 0), UDim2.new(0, 0, 0, 0), 1 Corner(AvatarImage, 40)
+pcall(function() AvatarImage.Image = Players:GetUserThumbnailAsync(LP.UserId, Enum.ThumbnailType.HeadShot, Enum.ThumbnailSize.Size100x100) end)
+
+local UserLabel = Instance.new("TextLabel", pProfile) UserLabel.Size, UserLabel.Position, UserLabel.BackgroundColor3, UserLabel.TextColor3, UserLabel.Font, UserLabel.TextSize, UserLabel.TextXAlignment = UDim2.new(0, 250, 0, 32), UDim2.new(0, 100, 0, 10), ThemeColors.Box, C_LightCyan, Enum.Font.GothamBold, 13, Enum.TextXAlignment.Center UserLabel.Text = "👤 " .. LP.DisplayName .. " (@" .. LP.Name .. ")" Corner(UserLabel, 6)
+local UStroke = Instance.new("UIStroke", UserLabel) UStroke.ApplyStrokeMode = Enum.ApplyStrokeMode.Border UStroke.Color = Color3.fromRGB(35, 45, 65)
+
+local DiscordBtn = Instance.new("TextButton", pProfile) DiscordBtn.Size, DiscordBtn.Position, DiscordBtn.BackgroundColor3, DiscordBtn.TextColor3, DiscordBtn.Font, DiscordBtn.TextSize = UDim2.new(0, 80, 0, 36), UDim2.new(0, 10, 0, 98), ThemeColors.Box, C_Periwinkle, Enum.Font.GothamBold, 11 DiscordBtn.Text = "💬 Discord\n(Click Copy)" Corner(DiscordBtn, 6)
+local DStroke = Instance.new("UIStroke", DiscordBtn) DStroke.ApplyStrokeMode = Enum.ApplyStrokeMode.Border DStroke.Color = Color3.fromRGB(35, 45, 65)
+DiscordBtn.MouseButton1Click:Connect(function()
+    if setclipboard then setclipboard("https://discord.gg/MpzZ4CSJBc") end
+    DiscordBtn.Text = "✅ Copied!" DiscordBtn.TextColor3 = Color3.fromRGB(100, 255, 150) task.wait(2) DiscordBtn.Text = "💬 Discord\n(Click Copy)" DiscordBtn.TextColor3 = C_Periwinkle
+end)
+
+local StatusBox = Instance.new("Frame", pProfile) StatusBox.Size, StatusBox.Position, StatusBox.BackgroundColor3 = UDim2.new(0, 80, 0, 50), UDim2.new(0, 10, 0, 140), ThemeColors.Box Corner(StatusBox, 6)
+local SStroke = Instance.new("UIStroke", StatusBox) SStroke.ApplyStrokeMode = Enum.ApplyStrokeMode.Border SStroke.Color = Color3.fromRGB(35, 45, 65)
+local StatusTitle = Instance.new("TextLabel", StatusBox) StatusTitle.Size, StatusTitle.Position, StatusTitle.Text, StatusTitle.TextColor3, StatusTitle.Font, StatusTitle.TextSize = UDim2.new(1, 0, 0, 16), UDim2.new(0, 0, 0, 4), "Status / Ver", C_Periwinkle, Enum.Font.GothamBold, 11
+local StatusVal = Instance.new("TextLabel", StatusBox) StatusVal.Size, StatusVal.Position, StatusVal.Text, StatusVal.TextColor3, StatusVal.Font, StatusVal.TextSize = UDim2.new(1, 0, 0, 26), UDim2.new(0, 0, 0, 20), "v2.6 VIP\n🟢 Active", C_LightCyan, Enum.Font.GothamBold, 11
+
+local ExecBox = Instance.new("Frame", pProfile) ExecBox.Size, ExecBox.Position, ExecBox.BackgroundColor3 = UDim2.new(0, 80, 0, 42), UDim2.new(0, 10, 0, 196), ThemeColors.Box Corner(ExecBox, 6)
+local EStroke = Instance.new("UIStroke", ExecBox) EStroke.ApplyStrokeMode = Enum.ApplyStrokeMode.Border EStroke.Color = Color3.fromRGB(35, 45, 65)
+local ExecTitle = Instance.new("TextLabel", ExecBox) ExecTitle.Size, ExecTitle.Position, ExecTitle.Text, ExecTitle.TextColor3, ExecTitle.Font, ExecTitle.TextSize = UDim2.new(1, 0, 0, 16), UDim2.new(0, 0, 0, 2), "Executor", C_Periwinkle, Enum.Font.GothamBold, 11
+local ExecVal = Instance.new("TextLabel", ExecBox) ExecVal.Size, ExecVal.Position, ExecVal.TextColor3, ExecVal.Font, ExecVal.TextSize = UDim2.new(1, 0, 0, 20), UDim2.new(0, 0, 0, 18), C_BrightBlue, Enum.Font.GothamBold, 11 ExecVal.Text = (identifyexecutor and identifyexecutor()) or "Unknown"
+
+local InfoBox = Instance.new("Frame", pProfile) InfoBox.Size, InfoBox.Position, InfoBox.BackgroundColor3 = UDim2.new(0, 250, 0, 190), UDim2.new(0, 100, 0, 48), ThemeColors.Box Corner(InfoBox, 6)
+local IStroke = Instance.new("UIStroke", InfoBox) IStroke.ApplyStrokeMode = Enum.ApplyStrokeMode.Border IStroke.Color = Color3.fromRGB(35, 45, 65)
+local InfoList = Instance.new("UIListLayout", InfoBox) InfoList.Padding, InfoList.SortOrder = UDim.new(0, 4), Enum.SortOrder.LayoutOrder
+
+local function CreateInfoItem(titleText, defaultVal, order, isMapBtn)
+    local f = isMapBtn and Instance.new("TextButton", InfoBox) or Instance.new("Frame", InfoBox)
+    f.Size, f.BackgroundColor3, f.LayoutOrder = UDim2.new(1, 0, 0, 42), ThemeColors.Main, order Corner(f, 4)
+    local fs = Instance.new("UIStroke", f) fs.ApplyStrokeMode = Enum.ApplyStrokeMode.Border fs.Color = Color3.fromRGB(30, 40, 60)
+    local t = Instance.new("TextLabel", f) t.Size, t.Position, t.Text, t.TextColor3, t.Font, t.TextSize, t.TextXAlignment = UDim2.new(1, -10, 0, 14), UDim2.new(0, 6, 0, 3), titleText, C_Periwinkle, Enum.Font.GothamBold, 11, Enum.TextXAlignment.Left
+    local v = Instance.new("TextLabel", f) v.Size, v.Position, v.Text, v.TextColor3, v.Font, v.TextSize, v.TextXAlignment, v.TextTruncate = UDim2.new(1, -12, 0, 20), UDim2.new(0, 6, 0, 18), defaultVal, C_LightCyan, Enum.Font.GothamBold, 12, Enum.TextXAlignment.Left, Enum.TextTruncate.AtEnd
+    return v, f
+end
+
+local TimeVal = CreateInfoItem("⏰ Real Time", "--:--:--", 1)
+local MapVal, MapBtn = CreateInfoItem("🗺️ Map Name (Click Copy)", "Loading...", 2, true)
+local ServerVal = CreateInfoItem("🆔 Server ID (JobId)", game.JobId ~= "" and game.JobId or "Singleplayer", 3)
+local PlayersVal = CreateInfoItem("👥 Players Count", #Players:GetPlayers() .. " Players", 4)
+
+MapBtn.MouseButton1Click:Connect(function()
+    if MapVal.Text ~= "" and MapVal.Text ~= "Loading..." then
+        if setclipboard then setclipboard(MapVal.Text) end
+        local old = MapVal.Text MapVal.Text, MapVal.TextColor3 = "✅ Copied Name!", Color3.fromRGB(100, 255, 150) task.wait(2) MapVal.Text, MapVal.TextColor3 = old, C_LightCyan
+    end
+end)
+
+task.spawn(function() pcall(function() local info = MarketPlaceService:GetProductInfo(game.PlaceId) if info and info.Name then MapVal.Text = info.Name end end) end)
+
+-- AimBot Tab
+AddToggle(tAimbot, "🎯 Enable AimBot", "Aimbot")
+AddToggle(tAimbot, "⚪ Show FOV Circle", "ShowAimFOV")
+local aimPartBtn; aimPartBtn = AddBtn(tAimbot, "🎯 Target Lock: Head", function()
+    cfg.AimPartIdx = cfg.AimPartIdx % #AimParts + 1
+    aimPartBtn.Text = "🎯 Target Lock: " .. AimPartNames[cfg.AimPartIdx]
+end)
+AddBox(tAimbot, "📐 FOV Radius Size (150)", function(t) if tonumber(t) then cfg.AimFOV = tonumber(t) end end)
+AddToggle(tAimbot, "🛡️ Ignore Team", "AimTeam")
+AddToggle(tAimbot, "🤝 Ignore Friends", "AimFriend")
+
+local function GetClosestPlayerForAim()
+    local closest, maxDist = nil, cfg.AimFOV
+    local mousePos = UserInputService:GetMouseLocation()
+
+    for _, p in pairs(Players:GetPlayers()) do
+        if p ~= LP and p.Character then
+            local eHum = p.Character:FindFirstChildOfClass("Humanoid")
+            local targetPart = p.Character:FindFirstChild(AimParts[cfg.AimPartIdx])
+            local isTeam, isFriend = IsSameTeam(p), LP:IsFriendsWith(p.UserId)
+            local pCustom = CustomTarget[p] or {Aimbot = true, Hitbox = true, Esp = true}
+
+            if eHum and eHum.Health > 0 and targetPart then
+                local isAimAllowed = (pCustom.Aimbot ~= false)
+                if isAimAllowed and not (cfg.AimTeam and isTeam) and not (cfg.AimFriend and isFriend) then
+                    local screenPos, onScreen = Camera:WorldToViewportPoint(targetPart.Position)
+                    if onScreen then
+                        local dist = (Vector2.new(screenPos.X, screenPos.Y) - mousePos).Magnitude
+                        if dist < maxDist then
+                            maxDist = dist
+                            closest = targetPart
+                        end
+                    end
+                end
+            end
+        end
+    end
+    return closest
+end
+
+-- Main Tab
+AddBtn(tMain, "💀 Reset Character", function() if LP.Character and LP.Character:FindFirstChildOfClass("Humanoid") then LP.Character:FindFirstChildOfClass("Humanoid").Health = 0 end end).BackgroundColor3 = Color3.fromRGB(180, 40, 50)
+AddBtn(tMain, "🚀 Teleport Tool", function()
+    local tool = Instance.new("Tool", LP.Backpack) tool.Name, tool.RequiresHandle = "TP Tool", false
+    tool.Activated:Connect(function() if LP:GetMouse().Hit then LP.Character.HumanoidRootPart.CFrame = LP:GetMouse().Hit + Vector3.new(0, 3, 0) end end)
+end)
+AddBtn(tMain, "🔄 Rejoin Server", function() 
+    if #Players:GetPlayers() <= 1 then TeleportService:Teleport(game.PlaceId, LP) else TeleportService:TeleportToPlaceInstance(game.PlaceId, game.JobId, LP) end
+end)
+AddBtn(tMain, "🚪 Leave Game", function() pcall(function() TeleportService:TeleportToPlaceInstance(game.PlaceId, "InvalidInstanceID", LP) end) task.wait(0.1) game:Shutdown() end).BackgroundColor3 = Color3.fromRGB(220, 30, 40)
+
+-- Chat Tab
+local hTeam = Instance.new("TextLabel", tChat) hTeam.Size, hTeam.Text, hTeam.TextColor3, hTeam.BackgroundTransparency, hTeam.Font, hTeam.TextSize, hTeam.TextXAlignment = UDim2.new(1, -6, 0, 25), "🛡️ Team Chat Switcher", C_Periwinkle, 1, Enum.Font.GothamBold, 14, Enum.TextXAlignment.Left
+AddBtn(tChat, "💬 Switch to Team Chat", function() SwitchToTeamChat() end).BackgroundColor3 = C_BrightBlue
+
+local hWhisper = Instance.new("TextLabel", tChat) hWhisper.Size, hWhisper.Text, hWhisper.TextColor3, hWhisper.BackgroundTransparency, hWhisper.Font, hWhisper.TextSize, hWhisper.TextXAlignment = UDim2.new(1, -6, 0, 25), "🔒 Private Whisper Switcher", C_Periwinkle, 1, Enum.Font.GothamBold, 14, Enum.TextXAlignment.Left
+AddBox(tChat, "👤 Target Username...", function(t) cfg.WhisperTargetPlayer = t end)
+AddBtn(tChat, "📨 Switch to Private Whisper", function() SwitchToWhisper(cfg.WhisperTargetPlayer) end).BackgroundColor3 = Color3.fromRGB(120, 90, 200)
+
+local hTarChat = Instance.new("TextLabel", tChat) hTarChat.Size, hTarChat.Text, hTarChat.TextColor3, hTarChat.BackgroundTransparency, hTarChat.Font, hTarChat.TextSize, hTarChat.TextXAlignment = UDim2.new(1, -6, 0, 25), "🎯 Target Player Whisper", C_Periwinkle, 1, Enum.Font.GothamBold, 14, Enum.TextXAlignment.Left
+AddBtn(tChat, "🎯 Switch Whisper to Target", function() SwitchToWhisper(cfg.TarName) end).BackgroundColor3 = Color3.fromRGB(180, 50, 50)
+
+-- Boost Tab
+AddToggle(tBoost, "🔭 Custom FOV", "CustomFOV")
+AddBox(tBoost, "🔭 FOV Value (0 - 500)", function(t) if tonumber(t) then cfg.FOV = math.clamp(tonumber(t), 0, 500) end end)
+AddBtn(tBoost, "🚀 FPS Boost", function()
+    pcall(function()
+        settings().Rendering.QualityLevel = Enum.QualityLevel.Level01 Lighting.GlobalShadows = false
+        for _, v in pairs(Lighting:GetChildren()) do if v:IsA("Atmosphere") or v:IsA("PostEffect") or v:IsA("BloomEffect") or v:IsA("BlurEffect") or v:IsA("SunRaysEffect") or v:IsA("DepthOfFieldEffect") then v:Destroy() end end
+        for _, v in pairs(Workspace:GetDescendants()) do
+            if v:IsA("BasePart") then v.Material, v.Reflectance = Enum.Material.SmoothPlastic, 0
+            elseif v:IsA("Decal") or v:IsA("Texture") then v.Texture = ""
+            elseif v:IsA("ParticleEmitter") or v:IsA("Trail") or v:IsA("Smoke") or v:IsA("Fire") or v:IsA("Sparkles") then v.Enabled = false end
+        end
+    end)
+end)
+AddBtn(tBoost, "🌑 Remove Shadows", function() Lighting.GlobalShadows = false end)
+AddBtn(tBoost, "🌫️ Remove Fog", function() for _, v in pairs(Lighting:GetChildren()) do if v:IsA("Atmosphere") then v:Destroy() end end end)
+AddToggle(tBoost, "💡 FullBright", "FullBright")
+AddToggle(tBoost, "📊 Show FPS/Ping", "ShowStats", function(v) StatsLabel.Visible = v end)
+
+-- Target Tab
+AddBox(tTarget, "🎯 Target Username...", function(t) cfg.TarName = t end)
+local function GetTar()
+    if cfg.TarName == "" then return nil end
+    for _, v in pairs(Players:GetPlayers()) do
+        if v ~= LP and (v.Name:lower():find(cfg.TarName:lower()) or v.DisplayName:lower():find(cfg.TarName:lower())) then return v.Character end
+    end
+end
+AddBtn(tTarget, "🏃 Teleport To Target", function() local c = GetTar() if c and c:FindFirstChild("HumanoidRootPart") then LP.Character.HumanoidRootPart.CFrame = c.HumanoidRootPart.CFrame * CFrame.new(0, 0, 3) end end)
+AddToggle(tTarget, "👣 Follow Target", "Follow")
+
+-- 👥 Players Tab (ปรับสีปุ่มเปิดเป็นสีเขียว C_GreenStatus)
+local function RefreshPlayerList()
+    for _, child in pairs(tPlayers:GetChildren()) do if not child:IsA("UIListLayout") then child:Destroy() end end
+    AddBtn(tPlayers, "🔄 Refresh Players List", RefreshPlayerList)
+
+    local function RenderGroup(titleText, titleColor, isTeamGroup)
+        local h = Instance.new("TextLabel", tPlayers) h.Size, h.Text, h.TextColor3, h.BackgroundTransparency, h.Font, h.TextSize, h.TextXAlignment = UDim2.new(1, -6, 0, 25), titleText, titleColor, 1, Enum.Font.GothamBold, 14, Enum.TextXAlignment.Left
+        for _, p in pairs(Players:GetPlayers()) do
+            if p ~= LP and (isTeamGroup == IsSameTeam(p)) then
+                if not CustomTarget[p] then CustomTarget[p] = {Aimbot = true, Hitbox = true, Esp = true, Alias = ""} end
+                local f = Instance.new("Frame", tPlayers) f.Size, f.BackgroundColor3 = UDim2.new(1, -6, 0, 36), ThemeColors.Box Corner(f)
+                local s = Instance.new("UIStroke", f) s.ApplyStrokeMode = Enum.ApplyStrokeMode.Border s.Color = Color3.fromRGB(35, 45, 65) s.Thickness = 1
+
+                local pName = Instance.new("TextLabel", f) 
+                pName.Size, pName.Position, pName.Text, pName.TextColor3, pName.BackgroundTransparency, pName.Font, pName.TextSize, pName.TextXAlignment, pName.TextTruncate = UDim2.new(0.3, 0, 1, 0), UDim2.new(0, 6, 0, 0), p.DisplayName .. " [" .. (p.Team and p.Team.Name or "No Team") .. "]", p.TeamColor and p.TeamColor.Color or Color3.fromRGB(255, 255, 255), 1, Enum.Font.GothamBold, 12, Enum.TextXAlignment.Left, Enum.TextTruncate.AtEnd
+                
+                local aliasBox = Instance.new("TextBox", f) aliasBox.Size, aliasBox.Position, aliasBox.PlaceholderText, aliasBox.Text, aliasBox.TextColor3, aliasBox.BackgroundColor3 = UDim2.new(0, 65, 0, 24), UDim2.new(1, -240, 0.5, -12), "Nickname...", CustomTarget[p].Alias or "", C_LightCyan, Color3.fromRGB(15, 20, 32) Corner(aliasBox, 4)
+                aliasBox.Font, aliasBox.TextSize = Enum.Font.GothamBold, 11
+                aliasBox.FocusLost:Connect(function() CustomTarget[p].Alias = aliasBox.Text end)
+
+                local function MakeBtn(posX, key, labelText)
+                    local b = Instance.new("TextButton", f) 
+                    -- 🟢 เปลี่ยนสีเปิดใช้งานเป็๋นสีเขียว (C_GreenStatus)
+                    b.Size, b.Position, b.Text, b.BackgroundColor3, b.TextColor3 = UDim2.new(0, 52, 0, 24), UDim2.new(1, posX, 0.5, -12), CustomTarget[p][key] and labelText .. " ✅" or labelText .. " ❌", CustomTarget[p][key] and C_GreenStatus or Color3.fromRGB(180, 40, 50), Color3.fromRGB(255, 255, 255) Corner(b, 4)
+                    b.Font, b.TextSize = Enum.Font.GothamBold, 11
+                    b.MouseButton1Click:Connect(function()
+                        CustomTarget[p][key] = not CustomTarget[p][key]
+                        b.Text, b.BackgroundColor3 = CustomTarget[p][key] and labelText .. " ✅" or labelText .. " ❌", CustomTarget[p][key] and C_GreenStatus or Color3.fromRGB(180, 40, 50)
+                    end)
+                end
+                MakeBtn(-170, "Aimbot", "AIM") MakeBtn(-114, "Hitbox", "BOX") MakeBtn(-58, "Esp", "ESP")
+            end
+        end
+    end
+    RenderGroup("🛡️ Teammates", C_LightCyan, true)
+    RenderGroup("⚔️ Enemies", Color3.fromRGB(255, 100, 100), false)
+end
+
+-- Hitbox & ESP Tabs
+AddToggle(tHitbox, "💥 Enable Hitbox", "Hitbox") AddToggle(tHitbox, "🛡️ Ignore Team", "HitTeam") AddToggle(tHitbox, "🤝 Ignore Friends", "HitFriend")
+AddBox(tHitbox, "📏 Size Value (10)", function(t) if tonumber(t) then cfg.Size = tonumber(t) end end)
+local cBtn; cBtn = AddBtn(tHitbox, "🎨 Color: Red", function() cfg.ColorIdx = cfg.ColorIdx % #Colors + 1 cBtn.Text = "🎨 Color: " .. ColorNames[cfg.ColorIdx] end)
+
+AddToggle(tEsp, "📦 ESP Highlight Box", "EspBox")
+local alphaBtn; alphaBtn = AddBtn(tEsp, "👻 Transparency: 85%", function() cfg.EspBoxAlphaIdx = cfg.EspBoxAlphaIdx % #AlphaValues + 1 alphaBtn.Text = "👻 Transparency: " .. AlphaNames[cfg.EspBoxAlphaIdx] end)
+AddToggle(tEsp, "👤 Show Name", "EspName") AddToggle(tEsp, "📏 Show Distance", "EspDist") AddToggle(tEsp, "❤️ Show Health", "EspHP") AddToggle(tEsp, "🛡️ Ignore Team", "EspTeam") AddToggle(tEsp, "🤝 Ignore Friends", "EspFriend")
+
+local function SetupESP(p)
+    if p == LP then return end
+    local function Add(c)
+        if not c then return end
+        local head = c:WaitForChild("Head", 5) if not head then return end
+        if not c:FindFirstChild("GBHL") then
+            local hl = Instance.new("Highlight", c) hl.Name, hl.Enabled = "GBHL", false
+        end
+        if not head:FindFirstChild("GBESP") then
+            local bg = Instance.new("BillboardGui", head) bg.Name, bg.Size, bg.StudsOffset, bg.AlwaysOnTop, bg.Enabled = "GBESP", UDim2.new(0, 200, 0, 50), Vector3.new(0, 2.5, 0), true, false
+            local txt = Instance.new("TextLabel", bg) txt.Name, txt.Size, txt.BackgroundTransparency, txt.Font, txt.TextSize, txt.TextStrokeTransparency, txt.RichText, txt.TextColor3 = "Txt", UDim2.new(1, 0, 1, 0), 1, Enum.Font.GothamBold, 13, 0.2, true, Color3.fromRGB(255, 255, 255)
+        end
+    end
+    if p.Character then Add(p.Character) end
+    p.CharacterAdded:Connect(Add)
+end
+
+-- Event Listeners
+Players.PlayerAdded:Connect(function(p) CustomTarget[p] = {Aimbot = true, Hitbox = true, Esp = true, Alias = ""} p:GetPropertyChangedSignal("Team"):Connect(RefreshPlayerList) SetupESP(p) RefreshPlayerList() end)
+Players.PlayerRemoving:Connect(function(p) CustomTarget[p] = nil RefreshPlayerList() end)
+for _, p in pairs(Players:GetPlayers()) do p:GetPropertyChangedSignal("Team"):Connect(RefreshPlayerList) SetupESP(p) end
+LP:GetPropertyChangedSignal("Team"):Connect(RefreshPlayerList)
+RefreshPlayerList()
+
+-- Main Loop
+local frameCount, fps, lastTick = 0, 0, tick()
+
+RunService.RenderStepped:Connect(function()
+    frameCount = frameCount + 1
+    if tick() - lastTick >= 1 then fps, frameCount, lastTick = frameCount, 0, tick() end
+
+    TimeVal.Text = os.date("%X")
+    PlayersVal.Text = #Players:GetPlayers() .. " Players"
+    if cfg.ShowStats then StatsLabel.Text = string.format("⚡ FPS: %d | 📶 Ping: %d ms", fps, math.floor(Stats.Network.ServerStatsItem["Data Ping"]:GetValue())) end
+    if cfg.CustomFOV and Workspace.CurrentCamera then Workspace.CurrentCamera.FieldOfView = cfg.FOV end
+
+    local mouseLoc = UserInputService:GetMouseLocation()
+    FOVCircle.Position = mouseLoc
+    FOVCircle.Radius = cfg.AimFOV
+    FOVCircle.Visible = cfg.ShowAimFOV
+
+    if cfg.Aimbot then
+        local aimTargetPart = GetClosestPlayerForAim()
+        if aimTargetPart then
+            Camera.CFrame = CFrame.new(Camera.CFrame.Position, aimTargetPart.Position)
+        end
+    end
+
+    pcall(function()
+        if cfg.FullBright then Lighting.Brightness, Lighting.ClockTime, Lighting.GlobalShadows = 2, 14, false end
+        local myChar = LP.Character
+        local myHrp, myHum, tar = myChar and myChar:FindFirstChild("HumanoidRootPart"), myChar and myChar:FindFirstChildOfClass("Humanoid"), GetTar()
+
+        if tar and tar:FindFirstChild("HumanoidRootPart") and cfg.Follow and myHum then myHum:MoveTo(tar.HumanoidRootPart.Position) end
+
+        for _, p in pairs(Players:GetPlayers()) do
+            if p ~= LP and p.Character then
+                local eHrp, eHead, eHum = p.Character:FindFirstChild("HumanoidRootPart"), p.Character:FindFirstChild("Head"), p.Character:FindFirstChildOfClass("Humanoid")
+                local isTeam, isFriend, valid = IsSameTeam(p), LP:IsFriendsWith(p.UserId), eHum and eHum.Health > 0
+                local pCustom = CustomTarget[p] or {Aimbot = true, Hitbox = true, Esp = true, Alias = ""}
+
+                if eHrp then
+                    if not valid or (cfg.HitTeam and isTeam) or (cfg.HitFriend and isFriend) or not cfg.Hitbox or not pCustom.Hitbox then
+                        eHrp.Size, eHrp.Transparency = Vector3.new(2, 2, 1), 1
+                    else
+                        local tSize = (eHum and (eHum.Sit or eHum:GetState() == Enum.HumanoidStateType.Seated)) and (cfg.Size * 0.3) or cfg.Size
+                        eHrp.Size, eHrp.Transparency, eHrp.Color, eHrp.Material, eHrp.CanCollide = Vector3.new(tSize, tSize, tSize), 0.6, Colors[cfg.ColorIdx], Enum.Material.ForceField, false
+                    end
+                end
+
+                local hl, bg = p.Character:FindFirstChild("GBHL"), eHead and eHead:FindFirstChild("GBESP")
+                local txt = bg and bg:FindFirstChild("Txt")
+                local showEsp = valid and pCustom.Esp and not ((cfg.EspTeam and isTeam) or (cfg.EspFriend and isFriend))
+                local teamColor = p.TeamColor and p.TeamColor.Color or Color3.fromRGB(255, 255, 255)
+
+                if hl then hl.Enabled, hl.FillColor, hl.OutlineColor, hl.FillTransparency = cfg.EspBox and showEsp, Color3.fromRGB(255, 255, 255), Color3.fromRGB(255, 255, 255), AlphaValues[cfg.EspBoxAlphaIdx] end
+
+                if bg and txt then
+                    if showEsp and (cfg.EspName or cfg.EspDist or cfg.EspHP) then
+                        bg.Enabled = true
+                        local hexColor = string.format("#%02X%02X%02X", math.floor(teamColor.R * 255), math.floor(teamColor.G * 255), math.floor(teamColor.B * 255))
+                        local t = {}
+                        if cfg.EspName then table.insert(t, string.format('<font color="%s">%s</font>', hexColor, (pCustom.Alias and pCustom.Alias ~= "") and (p.DisplayName .. " [" .. pCustom.Alias .. "]") or p.DisplayName)) end
+                        if cfg.EspHP then table.insert(t, string.format('<font color="#FFFFFF">❤️ %d/%d</font>', math.floor(eHum.Health), math.floor(eHum.MaxHealth))) end
+                        if cfg.EspDist and myHrp and eHrp then table.insert(t, string.format('<font color="#FFFFFF">📏 %dm</font>', math.floor((myHrp.Position - eHrp.Position).Magnitude))) end
+                        txt.Text = table.concat(t, "\n")
+                    else bg.Enabled = false end
+                end
+            end
+        end
+    end)
+end)
