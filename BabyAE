@@ -1,0 +1,556 @@
+Local CoreGui, Players, RunService, TeleportService, Lighting, Stats, Workspace, TextChatService, ReplicatedStorage, MarketplaceService, UserInputService, VirtualUser, GuiService, HttpService = game:GetService("CoreGui"), game:GetService("Players"), game:GetService("RunService"), game:GetService("TeleportService"), game:GetService("Lighting"), game:GetService("Stats"), game:GetService("Workspace"), game:GetService("TextChatService"), game:GetService("ReplicatedStorage"), game:GetService("MarketplaceService"), game:GetService("UserInputService"), game:GetService("VirtualUser"), game:GetService("GuiService"), game:GetService("HttpService")
+local LP = Players.LocalPlayer
+local Camera = Workspace.CurrentCamera
+
+if CoreGui:FindFirstChild("GBHub") then CoreGui.GBHub:Destroy() end
+
+local cfg = {
+    Hitbox = false, HitTeam = true, HitFriend = true, Size = 10, ColorIdx = 1, 
+    EspBox = false, EspName = false, EspDist = false, EspHP = false, EspTeam = true, EspFriend = true, EspBoxAlphaIdx = 2, 
+    TarName = "", Follow = false, FullBright = false, ShowStats = false, FOV = 70, CustomFOV = false, 
+    WhisperTargetPlayer = "",
+    Aimbot = false, AimTeam = true, AimFriend = true, AimPartIdx = 1, AimFOV = 150, ShowAimFOV = false,
+    AntiAFK = false, AFKSafeTP = false, AutoRejoin = false, Language = "TH"
+}
+
+local CustomTarget, Colors = {}, {Color3.fromRGB(255, 0, 0), Color3.fromRGB(0, 120, 255), Color3.fromRGB(0, 255, 100), Color3.fromRGB(255, 255, 0)}
+local AlphaValues = {0.95, 0.85, 0.65}
+local AimParts = {"Head", "HumanoidRootPart"}
+local DeathLogs = {}
+
+local C_LightCyan = Color3.fromHex("#e0f7fa")
+local C_BrightBlue = Color3.fromHex("#80deea")
+local C_Periwinkle = Color3.fromHex("#c5cae9")
+local C_GreenStatus = Color3.fromHex("#69f0ae")
+
+local GlassTheme = {
+    MainBg = Color3.fromRGB(15, 20, 35),
+    GlassOverlay = Color3.fromRGB(0, 0, 0),
+    Box = Color3.fromRGB(255, 255, 255),
+    Nav = Color3.fromRGB(0, 0, 0)
+}
+
+local function IsSameTeam(p) return p and ((p.Team and LP.Team and p.Team == LP.Team) or p.TeamColor == LP.TeamColor) end
+local function Corner(o, r) Instance.new("UICorner", o).CornerRadius = UDim.new(0, r or 8) end
+
+-- Drawing FOV
+local FOVCircle = Drawing.new("Circle")
+FOVCircle.Color = C_BrightBlue
+FOVCircle.Thickness = 1.5
+FOVCircle.Filled = false
+FOVCircle.Transparency = 1
+FOVCircle.Visible = false
+
+-- Chat Switchers
+local function SwitchToTeamChat()
+    pcall(function()
+        if TextChatService.ChatVersion == Enum.ChatVersion.TextChatService then
+            local teamChannel = TextChatService.TextChannels:FindFirstChild("RBXTeam")
+            if teamChannel then TextChatService.TargetTextChannel = teamChannel end
+            local general = TextChatService.TextChannels:FindFirstChild("RBXGeneral")
+            if general then general:SendAsync("/team") end
+        else 
+            ReplicatedStorage.DefaultChatSystemChatEvents.SayMessageRequest:FireServer("/team", "All")
+        end
+    end)
+end
+
+local function SwitchToWhisper(targetName)
+    if not targetName or targetName == "" then return end
+    pcall(function()
+        if TextChatService.ChatVersion == Enum.ChatVersion.TextChatService then
+            local general = TextChatService.TextChannels:FindFirstChild("RBXGeneral")
+            if general then general:SendAsync("/w " .. targetName) end
+        else 
+            ReplicatedStorage.DefaultChatSystemChatEvents.SayMessageRequest:FireServer("/w " .. targetName, "All")
+        end
+    end)
+end
+
+-- GUI Main Framework
+local Gui = Instance.new("ScreenGui", CoreGui) Gui.Name = "GBHub"
+
+local Btn = Instance.new("TextButton", Gui) 
+Btn.Size, Btn.Position, Btn.Text, Btn.BackgroundColor3, Btn.BackgroundTransparency, Btn.TextColor3, Btn.Draggable = UDim2.new(0, 45, 0, 45), UDim2.new(0.03, 0, 0.15, 0), "GH", GlassTheme.MainBg, 0.5, C_LightCyan, true
+Btn.Font, Btn.TextSize = Enum.Font.GothamBold, 16 Corner(Btn, 22)
+local BtnStroke = Instance.new("UIStroke", Btn) BtnStroke.Color = C_BrightBlue BtnStroke.Thickness = 1.5
+
+local StatsLabel = Instance.new("TextLabel", Gui)
+StatsLabel.Size, StatsLabel.Position, StatsLabel.BackgroundColor3, StatsLabel.BackgroundTransparency, StatsLabel.TextColor3, StatsLabel.Font, StatsLabel.TextSize, StatsLabel.Visible = UDim2.new(0, 170, 0, 32), UDim2.new(0, 15, 1, -45), GlassTheme.MainBg, 0.6, C_LightCyan, Enum.Font.GothamBold, 13, false
+Corner(StatsLabel, 6)
+local StatsStroke = Instance.new("UIStroke", StatsLabel) StatsStroke.Color = C_Periwinkle StatsStroke.Thickness = 1
+
+-- Main Frame (ปรับ BackgroundTransparency เป็น 0.55 ให้โปร่งใสมากขึ้น)
+local Main = Instance.new("Frame", Gui) 
+Main.Size, Main.Position, Main.BackgroundColor3, Main.BackgroundTransparency, Main.Draggable, Main.Active, Main.ClipsDescendants = UDim2.new(0, 520, 0, 320), UDim2.new(0.5, -260, 0.5, -160), GlassTheme.MainBg, 0.55, true, true, true
+Corner(Main, 14)
+local MainStroke = Instance.new("UIStroke", Main) MainStroke.Color = Color3.fromRGB(255, 255, 255) MainStroke.Transparency = 0.5 MainStroke.Thickness = 1.5
+Btn.MouseButton1Click:Connect(function() Main.Visible = not Main.Visible end)
+
+-- 🌫️ Glass Dark Overlay (ปรับให้ใสขึ้นเป็น 0.8)
+local GlassOverlay = Instance.new("Frame", Main)
+GlassOverlay.Size = UDim2.new(1, 0, 1, 0)
+GlassOverlay.BackgroundColor3 = GlassTheme.GlassOverlay
+GlassOverlay.BackgroundTransparency = 0.8
+Corner(GlassOverlay, 14)
+
+-- Top Nav Bar (ปรับความโปร่งใสเป็น 0.8)
+local Nav = Instance.new("Frame", Main) Nav.Size, Nav.BackgroundColor3, Nav.BackgroundTransparency = UDim2.new(1, 0, 0, 40), GlassTheme.Nav, 0.8 Corner(Nav, 14)
+local Title = Instance.new("TextLabel", Nav) Title.Size, Title.Position, Title.Text, Title.TextColor3, Title.BackgroundTransparency, Title.Font, Title.TextSize, Title.TextXAlignment = UDim2.new(0.7, 0, 1, 0), UDim2.new(0, 15, 0, 0), "✨ GOO BAT AE Hub (Glass Edition)", C_LightCyan, 1, Enum.Font.GothamBold, 15, Enum.TextXAlignment.Left
+
+-- Switch Language Button
+local LangBtn = Instance.new("TextButton", Nav)
+LangBtn.Size, LangBtn.Position, LangBtn.Text, LangBtn.BackgroundColor3, LangBtn.BackgroundTransparency, LangBtn.TextColor3, LangBtn.Font, LangBtn.TextSize = UDim2.new(0, 65, 0, 24), UDim2.new(1, -75, 0.5, -12), "🌐 TH", GlassTheme.Box, 0.85, C_BrightBlue, Enum.Font.GothamBold, 11
+Corner(LangBtn, 6)
+local LangStroke = Instance.new("UIStroke", LangBtn) LangStroke.ApplyStrokeMode = Enum.ApplyStrokeMode.Border LangStroke.Color = Color3.fromRGB(255, 255, 255) LangStroke.Transparency = 0.7
+
+-- Side Bar (ปรับความโปร่งใสเป็น 0.85)
+local SideScroll = Instance.new("ScrollingFrame", Main) 
+SideScroll.Size, SideScroll.Position, SideScroll.BackgroundColor3, SideScroll.BackgroundTransparency, SideScroll.CanvasSize, SideScroll.AutomaticCanvasSize, SideScroll.ScrollBarThickness = UDim2.new(0, 120, 1, -46), UDim2.new(0, 6, 0, 44), GlassTheme.MainBg, 0.85, UDim2.new(0, 0, 0, 0), "Y", 2
+SideScroll.ScrollBarImageColor3 = C_BrightBlue
+Corner(SideScroll, 8)
+
+local SideLayout = Instance.new("UIListLayout", SideScroll) SideLayout.Padding, SideLayout.SortOrder = UDim.new(0, 4), Enum.SortOrder.LayoutOrder
+local SidePadding = Instance.new("UIPadding", SideScroll) SidePadding.PaddingRight, SidePadding.PaddingTop = UDim.new(0, 4), UDim.new(0, 4)
+
+local Content = Instance.new("Frame", Main) Content.Size, Content.Position, Content.BackgroundTransparency = UDim2.new(1, -138, 1, -46), UDim2.new(0, 132, 0, 44), 1
+
+local Tabs = {}
+local tabOrder = 0
+local function AddTab(name, thName)
+    tabOrder = tabOrder + 1
+    local Page = Instance.new("Frame", Content) Page.Size, Page.BackgroundTransparency, Page.Visible = UDim2.new(1, 0, 1, 0), 1, false
+    local Scroll = Instance.new("ScrollingFrame", Page) Scroll.Size, Scroll.BackgroundTransparency, Scroll.AutomaticCanvasSize, Scroll.ScrollBarThickness = UDim2.new(1, 0, 1, 0), 1, "Y", 2
+    Scroll.ScrollBarImageColor3 = C_Periwinkle
+    Instance.new("UIListLayout", Scroll).Padding = UDim.new(0, 5)
+    
+    local TabBtn = Instance.new("TextButton", SideScroll) 
+    TabBtn.Size, TabBtn.Text, TabBtn.LayoutOrder, TabBtn.BackgroundColor3, TabBtn.BackgroundTransparency, TabBtn.TextColor3, TabBtn.Font, TabBtn.TextSize = UDim2.new(1, 0, 0, 28), (cfg.Language == "TH" and thName or name), tabOrder, GlassTheme.Box, 0.88, C_Periwinkle, Enum.Font.GothamBold, 11
+    Corner(TabBtn, 6)
+
+    local TabStroke = Instance.new("UIStroke", TabBtn) 
+    TabStroke.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
+    TabStroke.Color, TabStroke.Transparency = Color3.fromRGB(255, 255, 255), 0.8
+
+    TabBtn.MouseButton1Click:Connect(function()
+        for _, v in pairs(Tabs) do 
+            v.Page.Visible = false
+            v.Btn.BackgroundTransparency = 0.88
+            v.Btn.TextColor3 = C_Periwinkle
+            v.Stroke.Transparency = 0.8
+        end
+        Page.Visible = true
+        TabBtn.BackgroundTransparency = 0.65
+        TabBtn.TextColor3 = C_LightCyan
+        TabStroke.Transparency = 0.3
+    end)
+    Tabs[name] = {Page = Page, Scroll = Scroll, Btn = TabBtn, Stroke = TabStroke, EN = name, TH = thName}
+    return Scroll, Page
+end
+
+local function AddBtn(tab, textEN, textTH, func)
+    local text = cfg.Language == "TH" and textTH or textEN
+    local b = Instance.new("TextButton", tab) b.Size, b.Text, b.BackgroundColor3, b.BackgroundTransparency, b.TextColor3 = UDim2.new(1, -6, 0, 32), text, GlassTheme.Box, 0.82, C_LightCyan Corner(b, 6)
+    b.Font, b.TextSize = Enum.Font.GothamBold, 11
+    local s = Instance.new("UIStroke", b) s.ApplyStrokeMode = Enum.ApplyStrokeMode.Border s.Color, s.Transparency = Color3.fromRGB(255, 255, 255), 0.8
+    b.MouseButton1Click:Connect(function() pcall(func) end)
+    return b
+end
+
+local function AddToggle(tab, textEN, textTH, key, callback)
+    local text = cfg.Language == "TH" and textTH or textEN
+    local f = Instance.new("Frame", tab) f.Size, f.BackgroundColor3, f.BackgroundTransparency = UDim2.new(1, -6, 0, 32), GlassTheme.Box, 0.82 Corner(f, 6)
+    local s = Instance.new("UIStroke", f) s.ApplyStrokeMode = Enum.ApplyStrokeMode.Border s.Color, s.Transparency = Color3.fromRGB(255, 255, 255), 0.8
+    local l = Instance.new("TextLabel", f) l.Size, l.Position, l.Text, l.TextColor3, l.BackgroundTransparency, l.TextXAlignment = UDim2.new(0.7, 0, 1, 0), UDim2.new(0, 8, 0, 0), text, C_LightCyan, 1, Enum.TextXAlignment.Left l.Font, l.TextSize = Enum.Font.GothamBold, 11
+    local sw = Instance.new("TextButton", f) sw.Size, sw.Position, sw.Text, sw.BackgroundColor3, sw.BackgroundTransparency = UDim2.new(0, 32, 0, 18), UDim2.new(1, -38, 0.5, -9), "", cfg[key] and C_BrightBlue or Color3.fromRGB(255, 255, 255), cfg[key] and 0.3 or 0.8 Corner(sw, 9)
+    sw.MouseButton1Click:Connect(function() 
+        cfg[key] = not cfg[key] 
+        sw.BackgroundColor3 = cfg[key] and C_BrightBlue or Color3.fromRGB(255, 255, 255)
+        sw.BackgroundTransparency = cfg[key] and 0.3 or 0.8
+        if callback then callback(cfg[key]) end
+    end)
+end
+
+local function AddBox(tab, phEN, phTH, func)
+    local ph = cfg.Language == "TH" and phTH or phEN
+    local f = Instance.new("Frame", tab) f.Size, f.BackgroundColor3, f.BackgroundTransparency = UDim2.new(1, -6, 0, 32), GlassTheme.Box, 0.82 Corner(f, 6)
+    local s = Instance.new("UIStroke", f) s.ApplyStrokeMode = Enum.ApplyStrokeMode.Border s.Color, s.Transparency = Color3.fromRGB(255, 255, 255), 0.8
+    local tb = Instance.new("TextBox", f) tb.Size, tb.Position, tb.PlaceholderText, tb.Text, tb.TextColor3, tb.BackgroundTransparency, tb.TextXAlignment = UDim2.new(1, -16, 1, 0), UDim2.new(0, 8, 0, 0), ph, "", Color3.fromRGB(255, 255, 255), 1, Enum.TextXAlignment.Left tb.Font, tb.TextSize = Enum.Font.GothamBold, 11
+    tb.PlaceholderColor3 = C_Periwinkle
+    tb.FocusLost:Connect(function() pcall(func, tb.Text) end)
+end
+
+-- 📌 สร้างแท็บ
+local tMain = AddTab("🏠 Main", "🏠 หน้าหลัก")
+local tTeleport = AddTab("🌀 Teleport", "🌀 วาร์ป (TP)")
+local tChat = AddTab("💬 Chat", "💬 ช่องแชท")
+local tBoost = AddTab("⚡ Boosts", "⚡ บูสเครื่อง")
+local tPlayers = AddTab("👥 Players", "👥 ผู้เล่น")
+local tHitbox = AddTab("🥊 Hitbox", "🥊 ฮิตบ็อกซ์")
+local tEsp = AddTab("👁️ ESP", "👁️ มองทะลุ")
+local tAimbot = AddTab("🎯 AimBot", "🎯 ล็อกเป้า")
+local tTarget = AddTab("🎯 Target", "🎯 ติดตาม")
+local tAFK = AddTab("💤 AFK System", "💤 ระบบ AFK")
+local tServer = AddTab("🌐 Server List", "🌐 เซิร์ฟเวอร์")
+
+Tabs["🏠 Main"].Page.Visible = true
+Tabs["🏠 Main"].Btn.BackgroundTransparency = 0.65
+Tabs["🏠 Main"].Btn.TextColor3 = C_LightCyan
+
+-- Main Tab Controls
+AddBtn(tMain, "💀 Reset Character", "💀 รีเซ็ตตัวละคร", function() if LP.Character and LP.Character:FindFirstChildOfClass("Humanoid") then LP.Character:FindFirstChildOfClass("Humanoid").Health = 0 end end).BackgroundColor3 = Color3.fromRGB(180, 40, 50)
+AddBtn(tMain, "🔄 Rejoin Server", "🔄 รีจอยน์เซิร์ฟเวอร์เดิม", function() 
+    if #Players:GetPlayers() <= 1 then TeleportService:Teleport(game.PlaceId, LP) else TeleportService:TeleportToPlaceInstance(game.PlaceId, game.JobId, LP) end
+end)
+AddBtn(tMain, "🚪 Leave Game", "🚪 ออกจากเกม", function() pcall(function() TeleportService:TeleportToPlaceInstance(game.PlaceId, "InvalidInstanceID", LP) end) task.wait(0.1) game:Shutdown() end).BackgroundColor3 = Color3.fromRGB(220, 30, 40)
+
+-- Teleport Tab Controls
+AddBtn(tTeleport, "🚀 Teleport Tool (Click TP)", "🚀 เครื่องมือคลิกวาร์ป (TP Tool)", function()
+    local tool = Instance.new("Tool", LP.Backpack) tool.Name, tool.RequiresHandle = "TP Tool", false
+    tool.Activated:Connect(function() if LP:GetMouse().Hit then LP.Character.HumanoidRootPart.CFrame = LP:GetMouse().Hit + Vector3.new(0, 3, 0) end end)
+end)
+
+local deathListFrame = Instance.new("Frame", tTeleport) deathListFrame.Size, deathListFrame.BackgroundTransparency = UDim2.new(1, -6, 0, 0), 1
+deathListFrame.AutomaticSize = Enum.AutomaticSize.Y
+local deathLayout = Instance.new("UIListLayout", deathListFrame) deathLayout.Padding = UDim.new(0, 5)
+
+local function RefreshDeathLogsUI()
+    for _, child in pairs(deathListFrame:GetChildren()) do if not child:IsA("UIListLayout") then child:Destroy() end end
+    local h = Instance.new("TextLabel", deathListFrame) h.Size, h.Text, h.TextColor3, h.BackgroundTransparency, h.Font, h.TextSize, h.TextXAlignment = UDim2.new(1, 0, 0, 25), "💀 Death Teleport Locations / รายการจุดตาย", C_Periwinkle, 1, Enum.Font.GothamBold, 12, Enum.TextXAlignment.Left
+
+    if #DeathLogs == 0 then
+        local emptyLbl = Instance.new("TextLabel", deathListFrame) emptyLbl.Size, emptyLbl.Text, emptyLbl.TextColor3, emptyLbl.BackgroundTransparency, emptyLbl.Font, emptyLbl.TextSize = UDim2.new(1, 0, 0, 25), (cfg.Language == "TH" and "ยังไม่มีประวัติจุดตาย" or "No Death History"), Color3.fromRGB(200, 200, 200), 1, Enum.Font.GothamBold, 11
+    else
+        for idx, item in ipairs(DeathLogs) do
+            local card = Instance.new("Frame", deathListFrame) card.Size, card.BackgroundColor3, card.BackgroundTransparency = UDim2.new(1, 0, 0, 36), GlassTheme.Box, 0.82 Corner(card, 6)
+            local s = Instance.new("UIStroke", card) s.ApplyStrokeMode = Enum.ApplyStrokeMode.Border s.Color, s.Transparency = Color3.fromRGB(255, 255, 255), 0.8
+
+            local posText = string.format("#%d [%s] Pos: %.0f, %.0f, %.0f", idx, item.Time, item.CFrame.Position.X, item.CFrame.Position.Y, item.CFrame.Position.Z)
+            local lbl = Instance.new("TextLabel", card) lbl.Size, lbl.Position, lbl.Text, lbl.TextColor3, lbl.BackgroundTransparency, lbl.Font, lbl.TextSize, lbl.TextXAlignment = UDim2.new(0.65, 0, 1, 0), UDim2.new(0, 8, 0, 0), posText, C_LightCyan, 1, Enum.Font.GothamBold, 10, Enum.TextXAlignment.Left
+
+            local tpBtn = Instance.new("TextButton", card) tpBtn.Size, tpBtn.Position, tpBtn.Text, tpBtn.BackgroundColor3, tpBtn.BackgroundTransparency, tpBtn.TextColor3 = UDim2.new(0, 48, 0, 22), UDim2.new(1, -90, 0.5, -11), "TP 🚀", C_BrightBlue, 0.4, Color3.fromRGB(255, 255, 255) Corner(tpBtn, 4)
+            tpBtn.Font, tpBtn.TextSize = Enum.Font.GothamBold, 10
+            tpBtn.MouseButton1Click:Connect(function()
+                if LP.Character and LP.Character:FindFirstChild("HumanoidRootPart") then LP.Character.HumanoidRootPart.CFrame = item.CFrame + Vector3.new(0, 3, 0) end
+            end)
+
+            local delBtn = Instance.new("TextButton", card) delBtn.Size, delBtn.Position, delBtn.Text, delBtn.BackgroundColor3, delBtn.BackgroundTransparency, delBtn.TextColor3 = UDim2.new(0, 36, 0, 22), UDim2.new(1, -38, 0.5, -11), "🗑️", Color3.fromRGB(180, 40, 50), 0.4, Color3.fromRGB(255, 255, 255) Corner(delBtn, 4)
+            delBtn.Font, delBtn.TextSize = Enum.Font.GothamBold, 10
+            delBtn.MouseButton1Click:Connect(function() table.remove(DeathLogs, idx) RefreshDeathLogsUI() end)
+        end
+        AddBtn(deathListFrame, "🧹 Clear All Death Logs", "🧹 ลบประวัติจุดตายทั้งหมด", function() DeathLogs = {} RefreshDeathLogsUI() end).BackgroundColor3 = Color3.fromRGB(120, 40, 40)
+    end
+end
+
+local function HookDeathTracker(char)
+    local hum = char:WaitForChild("Humanoid", 5)
+    local hrp = char:WaitForChild("HumanoidRootPart", 5)
+    if hum and hrp then
+        hum.Died:Connect(function()
+            table.insert(DeathLogs, 1, {CFrame = hrp.CFrame, Time = os.date("%H:%M:%S")})
+            RefreshDeathLogsUI()
+        end)
+    end
+end
+if LP.Character then HookDeathTracker(LP.Character) end
+LP.CharacterAdded:Connect(HookDeathTracker)
+RefreshDeathLogsUI()
+
+-- Chat Tab Controls
+local hTeam = Instance.new("TextLabel", tChat) hTeam.Size, hTeam.Text, hTeam.TextColor3, hTeam.BackgroundTransparency, hTeam.Font, hTeam.TextSize, hTeam.TextXAlignment = UDim2.new(1, -6, 0, 22), "🛡️ Team Chat Switcher / สลับแชททีม", C_Periwinkle, 1, Enum.Font.GothamBold, 12, Enum.TextXAlignment.Left
+AddBtn(tChat, "💬 Switch to Team Chat", "💬 กดเข้าแชททีมทันที", function() SwitchToTeamChat() end)
+
+local hWhisper = Instance.new("TextLabel", tChat) hWhisper.Size, hWhisper.Text, hWhisper.TextColor3, hWhisper.BackgroundTransparency, hWhisper.Font, hWhisper.TextSize, hWhisper.TextXAlignment = UDim2.new(1, -6, 0, 22), "🔒 Private Whisper Switcher / แชทส่วนตัว", C_Periwinkle, 1, Enum.Font.GothamBold, 12, Enum.TextXAlignment.Left
+AddBox(tChat, "👤 Target Username...", "👤 ใส่ชื่อผู้เล่น...", function(t) cfg.WhisperTargetPlayer = t end)
+AddBtn(tChat, "📨 Switch to Private Whisper", "📨 สลับไปแชทส่วนตัว", function() SwitchToWhisper(cfg.WhisperTargetPlayer) end)
+
+-- Boost Tab Controls
+AddToggle(tBoost, "🔭 Custom FOV", "🔭 ปรับระยะมุมมอง (FOV)", "CustomFOV")
+AddBox(tBoost, "🔭 FOV Value (0 - 500)", "🔭 ใส่ค่า FOV (0 - 500)", function(t) if tonumber(t) then cfg.FOV = math.clamp(tonumber(t), 0, 500) end end)
+AddBtn(tBoost, "🚀 FPS Boost", "🚀 บูส FPS ลบเอฟเฟกต์หนักๆ", function()
+    pcall(function()
+        settings().Rendering.QualityLevel = Enum.QualityLevel.Level01 Lighting.GlobalShadows = false
+        for _, v in pairs(Lighting:GetChildren()) do if v:IsA("Atmosphere") or v:IsA("PostEffect") or v:IsA("BloomEffect") or v:IsA("BlurEffect") or v:IsA("SunRaysEffect") or v:IsA("DepthOfFieldEffect") then v:Destroy() end end
+        for _, v in pairs(Workspace:GetDescendants()) do
+            if v:IsA("BasePart") then v.Material, v.Reflectance = Enum.Material.SmoothPlastic, 0
+            elseif v:IsA("Decal") or v:IsA("Texture") then v.Texture = ""
+            elseif v:IsA("ParticleEmitter") or v:IsA("Trail") or v:IsA("Smoke") or v:IsA("Fire") or v:IsA("Sparkles") then v.Enabled = false end
+        end
+    end)
+end)
+AddToggle(tBoost, "💡 FullBright", "💡 เปิดความสว่างแมพ (FullBright)", "FullBright")
+AddToggle(tBoost, "📊 Show FPS/Ping", "📊 แสดง FPS และ Ping", "ShowStats", function(v) StatsLabel.Visible = v end)
+
+-- Players Tab Controls
+local function RefreshPlayerList()
+    for _, child in pairs(tPlayers:GetChildren()) do if not child:IsA("UIListLayout") then child:Destroy() end end
+    AddBtn(tPlayers, "🔄 Refresh Players List", "🔄 รีเฟรชรายชื่อผู้เล่น", RefreshPlayerList)
+
+    local function RenderGroup(titleText, titleColor, isTeamGroup)
+        local h = Instance.new("TextLabel", tPlayers) h.Size, h.Text, h.TextColor3, h.BackgroundTransparency, h.Font, h.TextSize, h.TextXAlignment = UDim2.new(1, -6, 0, 22), titleText, titleColor, 1, Enum.Font.GothamBold, 12, Enum.TextXAlignment.Left
+        for _, p in pairs(Players:GetPlayers()) do
+            if p ~= LP and (isTeamGroup == IsSameTeam(p)) then
+                if not CustomTarget[p] then CustomTarget[p] = {Aimbot = true, Hitbox = true, Esp = true, Alias = ""} end
+                local f = Instance.new("Frame", tPlayers) f.Size, f.BackgroundColor3, f.BackgroundTransparency = UDim2.new(1, -6, 0, 34), GlassTheme.Box, 0.82 Corner(f, 6)
+                local s = Instance.new("UIStroke", f) s.ApplyStrokeMode = Enum.ApplyStrokeMode.Border s.Color, s.Transparency = Color3.fromRGB(255, 255, 255), 0.8
+
+                local pName = Instance.new("TextLabel", f) 
+                pName.Size, pName.Position, pName.Text, pName.TextColor3, pName.BackgroundTransparency, pName.Font, pName.TextSize, pName.TextXAlignment, pName.TextTruncate = UDim2.new(0.3, 0, 1, 0), UDim2.new(0, 6, 0, 0), p.DisplayName .. " [" .. (p.Team and p.Team.Name or "No Team") .. "]", p.TeamColor and p.TeamColor.Color or Color3.fromRGB(255, 255, 255), 1, Enum.Font.GothamBold, 10, Enum.TextXAlignment.Left, Enum.TextTruncate.AtEnd
+                
+                local aliasBox = Instance.new("TextBox", f) aliasBox.Size, aliasBox.Position, aliasBox.PlaceholderText, aliasBox.Text, aliasBox.TextColor3, aliasBox.BackgroundColor3, aliasBox.BackgroundTransparency = UDim2.new(0, 60, 0, 22), UDim2.new(1, -230, 0.5, -11), "Nickname...", CustomTarget[p].Alias or "", C_LightCyan, Color3.fromRGB(0, 0, 0), 0.6 Corner(aliasBox, 4)
+                aliasBox.Font, aliasBox.TextSize = Enum.Font.GothamBold, 10
+                aliasBox.FocusLost:Connect(function() CustomTarget[p].Alias = aliasBox.Text end)
+
+                local function MakeBtn(posX, key, labelText)
+                    local b = Instance.new("TextButton", f) 
+                    b.Size, b.Position, b.Text, b.BackgroundColor3, b.BackgroundTransparency, b.TextColor3 = UDim2.new(0, 50, 0, 22), UDim2.new(1, posX, 0.5, -11), CustomTarget[p][key] and labelText .. " ✅" or labelText .. " ❌", CustomTarget[p][key] and C_GreenStatus or Color3.fromRGB(180, 40, 50), 0.4, Color3.fromRGB(255, 255, 255) Corner(b, 4)
+                    b.Font, b.TextSize = Enum.Font.GothamBold, 10
+                    b.MouseButton1Click:Connect(function()
+                        CustomTarget[p][key] = not CustomTarget[p][key]
+                        b.Text, b.BackgroundColor3 = CustomTarget[p][key] and labelText .. " ✅" or labelText .. " ❌", CustomTarget[p][key] and C_GreenStatus or Color3.fromRGB(180, 40, 50)
+                    end)
+                end
+                MakeBtn(-165, "Aimbot", "AIM") MakeBtn(-110, "Hitbox", "BOX") MakeBtn(-55, "Esp", "ESP")
+            end
+        end
+    end
+    RenderGroup("🛡️ Teammates / เพื่อนร่วมทีม", C_LightCyan, true)
+    RenderGroup("⚔️ Enemies / ศัตรู", Color3.fromRGB(255, 120, 120), false)
+end
+
+-- Hitbox & ESP Controls
+AddToggle(tHitbox, "💥 Enable Hitbox", "💥 เปิดใช้งานฮิตบ็อกซ์", "Hitbox") 
+AddToggle(tHitbox, "🛡️ Ignore Team", "🛡️ ไม่รวมเพื่อนร่วมทีม", "HitTeam") 
+AddToggle(tHitbox, "🤝 Ignore Friends", "🤝 ไม่รวมเพื่อนใน Roblox", "HitFriend")
+AddBox(tHitbox, "📏 Size Value (10)", "📏 ปรับขนาดขยาย (ปกติ 10)", function(t) if tonumber(t) then cfg.Size = tonumber(t) end end)
+
+AddToggle(tEsp, "📦 ESP Highlight Box", "📦 แสดงกรอบเรืองแสง (Highlight)", "EspBox")
+AddToggle(tEsp, "👤 Show Name", "👤 แสดงชื่อผู้เล่น", "EspName") 
+AddToggle(tEsp, "📏 Show Distance", "📏 แสดงระยะห่าง (เมตร)", "EspDist") 
+AddToggle(tEsp, "❤️ Show Health", "❤️ แสดงหลอดเลือด HP", "EspHP") 
+AddToggle(tEsp, "🛡️ Ignore Team", "🛡️ ไม่รวมเพื่อนร่วมทีม", "EspTeam") 
+AddToggle(tEsp, "🤝 Ignore Friends", "🤝 ไม่รวมเพื่อนใน Roblox", "EspFriend")
+
+-- AimBot Controls
+AddToggle(tAimbot, "🎯 Enable AimBot", "🎯 เปิดใช้งานระบบล็อกเป้า", "Aimbot")
+AddToggle(tAimbot, "⚪ Show FOV Circle", "⚪ แสดงวงกลมระยะล็อก", "ShowAimFOV")
+AddBox(tAimbot, "📐 FOV Radius Size (150)", "📐 ขนาดวงกลมล็อกเป้า (150)", function(t) if tonumber(t) then cfg.AimFOV = tonumber(t) end end)
+AddToggle(tAimbot, "🛡️ Ignore Team", "🛡️ ไม่ล็อกเพื่อนร่วมทีม", "AimTeam")
+AddToggle(tAimbot, "🤝 Ignore Friends", "🤝 ไม่ล็อกเพื่อนใน Roblox", "AimFriend")
+
+-- Target Controls
+AddBox(tTarget, "🎯 Target Username...", "🎯 ใส่ชื่อเป้าหมาย...", function(t) cfg.TarName = t end)
+local function GetTar()
+    if cfg.TarName == "" then return nil end
+    for _, v in pairs(Players:GetPlayers()) do
+        if v ~= LP and (v.Name:lower():find(cfg.TarName:lower()) or v.DisplayName:lower():find(cfg.TarName:lower())) then return v.Character end
+    end
+end
+AddBtn(tTarget, "🏃 Teleport To Target", "🏃 วาร์ปไปหาเป้าหมาย", function() local c = GetTar() if c and c:FindFirstChild("HumanoidRootPart") then LP.Character.HumanoidRootPart.CFrame = c.HumanoidRootPart.CFrame * CFrame.new(0, 0, 3) end end)
+AddToggle(tTarget, "👣 Follow Target", "👣 เดินตามเป้าหมายอัตโนมัติ", "Follow")
+
+-- AFK Controls
+AddToggle(tAFK, "⚡ Anti-AFK Kick (Prevent 20m Kick)", "⚡ ป้องกันการโดนเตะออกจากเกม (Anti-AFK)", "AntiAFK")
+local oldCFrame = nil
+AddToggle(tAFK, "🛡️ Safe Zone Sky Teleport", "🛡️ วาร์ปไปซ่อนบนฟ้าป้องการโดนฆ่า", "AFKSafeTP", function(val)
+    if val then
+        if LP.Character and LP.Character:FindFirstChild("HumanoidRootPart") then
+            oldCFrame = LP.Character.HumanoidRootPart.CFrame
+            LP.Character.HumanoidRootPart.CFrame = oldCFrame + Vector3.new(0, 5000, 0)
+        end
+    else
+        if oldCFrame and LP.Character and LP.Character:FindFirstChild("HumanoidRootPart") then
+            LP.Character.HumanoidRootPart.CFrame = oldCFrame
+        end
+    end
+end)
+AddToggle(tAFK, "🔄 Auto Rejoin On Disconnect", "🔄 รีจอยน์กลับเข้าเกมให้อัตโนมัติเมื่อหลุด", "AutoRejoin")
+
+-- Server List Controls
+local serverListFrame = Instance.new("Frame", tServer) serverListFrame.Size, serverListFrame.BackgroundTransparency = UDim2.new(1, -6, 0, 0), 1
+serverListFrame.AutomaticSize = Enum.AutomaticSize.Y
+local serverLayout = Instance.new("UIListLayout", serverListFrame) serverLayout.Padding = UDim.new(0, 5)
+
+local function RefreshServerListUI()
+    for _, child in pairs(serverListFrame:GetChildren()) do if not child:IsA("UIListLayout") then child:Destroy() end end
+    AddBtn(serverListFrame, "🔄 Refresh Server List", "🔄 ดึงข้อมูลเซิร์ฟเวอร์ใหม่", RefreshServerListUI)
+
+    local loadingLbl = Instance.new("TextLabel", serverListFrame) loadingLbl.Size, loadingLbl.Text, loadingLbl.TextColor3, loadingLbl.BackgroundTransparency, loadingLbl.Font, loadingLbl.TextSize = UDim2.new(1, 0, 0, 25), (cfg.Language == "TH" and "กำลังโหลดข้อมูลเซิร์ฟเวอร์..." or "Loading servers..."), C_Periwinkle, 1, Enum.Font.GothamBold, 11
+
+    task.spawn(function()
+        local success, rawData = pcall(function()
+            return game:HttpGet("https://games.roblox.com/v1/games/" .. game.PlaceId .. "/servers/Public?sortOrder=Asc&limit=50")
+        end)
+
+        if loadingLbl then loadingLbl:Destroy() end
+
+        if success and rawData then
+            local data = HttpService:JSONDecode(rawData)
+            if data and data.data then
+                for idx, server in ipairs(data.data) do
+                    if server.id ~= game.JobId and server.playing < server.maxPlayers then
+                        local card = Instance.new("Frame", serverListFrame) card.Size, card.BackgroundColor3, card.BackgroundTransparency = UDim2.new(1, 0, 0, 38), GlassTheme.Box, 0.82 Corner(card, 6)
+                        local s = Instance.new("UIStroke", card) s.ApplyStrokeMode = Enum.ApplyStrokeMode.Border s.Color, s.Transparency = Color3.fromRGB(255, 255, 255), 0.8
+
+                        local pingText = server.ping and string.format("📶 %dms", server.ping) or "📶 N/A"
+                        local playersText = string.format("👥 %d/%d Players", server.playing, server.maxPlayers)
+                        local infoText = string.format("Server #%d | %s | %s", idx, playersText, pingText)
+
+                        local lbl = Instance.new("TextLabel", card) lbl.Size, lbl.Position, lbl.Text, lbl.TextColor3, lbl.BackgroundTransparency, lbl.Font, lbl.TextSize, lbl.TextXAlignment = UDim2.new(0.7, 0, 1, 0), UDim2.new(0, 8, 0, 0), infoText, C_LightCyan, 1, Enum.Font.GothamBold, 10, Enum.TextXAlignment.Left
+
+                        local joinBtn = Instance.new("TextButton", card) joinBtn.Size, joinBtn.Position, joinBtn.Text, joinBtn.BackgroundColor3, joinBtn.BackgroundTransparency, joinBtn.TextColor3 = UDim2.new(0, 58, 0, 22), UDim2.new(1, -64, 0.5, -11), (cfg.Language == "TH" and "เข้าร่วม" or "Join"), C_BrightBlue, 0.4, Color3.fromRGB(255, 255, 255) Corner(joinBtn, 4)
+                        joinBtn.Font, joinBtn.TextSize = Enum.Font.GothamBold, 10
+                        joinBtn.MouseButton1Click:Connect(function()
+                            TeleportService:TeleportToPlaceInstance(game.PlaceId, server.id, LP)
+                        end)
+                    end
+                end
+            end
+        else
+            local errLbl = Instance.new("TextLabel", serverListFrame) errLbl.Size, errLbl.Text, errLbl.TextColor3, errLbl.BackgroundTransparency, errLbl.Font, errLbl.TextSize = UDim2.new(1, 0, 0, 25), (cfg.Language == "TH" and "ไม่สามารถโหลดข้อมูลได้" or "Failed to load servers"), Color3.fromRGB(255, 100, 100), 1, Enum.Font.GothamBold, 11
+        end
+    end)
+end
+RefreshServerListUI()
+
+-- Language Button Event
+LangBtn.MouseButton1Click:Connect(function()
+    cfg.Language = cfg.Language == "TH" and "EN" or "TH"
+    LangBtn.Text = cfg.Language == "TH" and "🌐 TH" or "🌐 EN"
+    for _, tab in pairs(Tabs) do
+        tab.Btn.Text = cfg.Language == "TH" and tab.TH or tab.EN
+    end
+end)
+
+-- Anti-AFK Hook
+LP.Idled:Connect(function()
+    if cfg.AntiAFK then
+        VirtualUser:Button2Down(Vector2.new(0,0), Workspace.CurrentCamera.CFrame)
+        task.wait(1)
+        VirtualUser:Button2Up(Vector2.new(0,0), Workspace.CurrentCamera.CFrame)
+    end
+end)
+
+-- Auto Rejoin Hook
+GuiService.ErrorMessageChanged:Connect(function()
+    if cfg.AutoRejoin then
+        task.wait(2)
+        if #Players:GetPlayers() <= 1 then TeleportService:Teleport(game.PlaceId, LP) else TeleportService:TeleportToPlaceInstance(game.PlaceId, game.JobId, LP) end
+    end
+end)
+
+local function GetClosestPlayerForAim()
+    local closest, maxDist = nil, cfg.AimFOV
+    local mousePos = UserInputService:GetMouseLocation()
+
+    for _, p in pairs(Players:GetPlayers()) do
+        if p ~= LP and p.Character then
+            local eHum = p.Character:FindFirstChildOfClass("Humanoid")
+            local targetPart = p.Character:FindFirstChild(AimParts[cfg.AimPartIdx])
+            local isTeam, isFriend = IsSameTeam(p), LP:IsFriendsWith(p.UserId)
+            local pCustom = CustomTarget[p] or {Aimbot = true, Hitbox = true, Esp = true}
+
+            if eHum and eHum.Health > 0 and targetPart then
+                if pCustom.Aimbot ~= false and not (cfg.AimTeam and isTeam) and not (cfg.AimFriend and isFriend) then
+                    local screenPos, onScreen = Camera:WorldToViewportPoint(targetPart.Position)
+                    if onScreen then
+                        local dist = (Vector2.new(screenPos.X, screenPos.Y) - mousePos).Magnitude
+                        if dist < maxDist then
+                            maxDist = dist
+                            closest = targetPart
+                        end
+                    end
+                end
+            end
+        end
+    end
+    return closest
+end
+
+local function SetupESP(p)
+    if p == LP then return end
+    local function Add(c)
+        if not c then return end
+        local head = c:WaitForChild("Head", 5) if not head then return end
+        if not c:FindFirstChild("GBHL") then
+            local hl = Instance.new("Highlight", c) hl.Name, hl.Enabled = "GBHL", false
+        end
+        if not head:FindFirstChild("GBESP") then
+            local bg = Instance.new("BillboardGui", head) bg.Name, bg.Size, bg.StudsOffset, bg.AlwaysOnTop, bg.Enabled = "GBESP", UDim2.new(0, 200, 0, 50), Vector3.new(0, 2.5, 0), true, false
+            local txt = Instance.new("TextLabel", bg) txt.Name, txt.Size, txt.BackgroundTransparency, txt.Font, txt.TextSize, txt.TextStrokeTransparency, txt.RichText, txt.TextColor3 = "Txt", UDim2.new(1, 0, 1, 0), 1, Enum.Font.GothamBold, 13, 0.2, true, Color3.fromRGB(255, 255, 255)
+        end
+    end
+    if p.Character then Add(p.Character) end
+    p.CharacterAdded:Connect(Add)
+end
+
+-- Events Setup
+Players.PlayerAdded:Connect(function(p) CustomTarget[p] = {Aimbot = true, Hitbox = true, Esp = true, Alias = ""} p:GetPropertyChangedSignal("Team"):Connect(RefreshPlayerList) SetupESP(p) RefreshPlayerList() end)
+Players.PlayerRemoving:Connect(function(p) CustomTarget[p] = nil RefreshPlayerList() end)
+for _, p in pairs(Players:GetPlayers()) do p:GetPropertyChangedSignal("Team"):Connect(RefreshPlayerList) SetupESP(p) end
+LP:GetPropertyChangedSignal("Team"):Connect(RefreshPlayerList)
+RefreshPlayerList()
+
+-- Main Render Loop
+local frameCount, fps, lastTick = 0, 0, tick()
+
+RunService.RenderStepped:Connect(function()
+    frameCount = frameCount + 1
+    if tick() - lastTick >= 1 then fps, frameCount, lastTick = frameCount, 0, tick() end
+
+    if cfg.ShowStats then StatsLabel.Text = string.format("⚡ FPS: %d | 📶 Ping: %d ms", fps, math.floor(Stats.Network.ServerStatsItem["Data Ping"]:GetValue())) end
+    if cfg.CustomFOV and Workspace.CurrentCamera then Workspace.CurrentCamera.FieldOfView = cfg.FOV end
+
+    FOVCircle.Position = UserInputService:GetMouseLocation()
+    FOVCircle.Radius = cfg.AimFOV
+    FOVCircle.Visible = cfg.ShowAimFOV
+
+    if cfg.Aimbot then
+        local aimTargetPart = GetClosestPlayerForAim()
+        if aimTargetPart then Camera.CFrame = CFrame.new(Camera.CFrame.Position, aimTargetPart.Position) end
+    end
+
+    pcall(function()
+        if cfg.FullBright then Lighting.Brightness, Lighting.ClockTime, Lighting.GlobalShadows = 2, 14, false end
+        local myChar = LP.Character
+        local myHrp, myHum, tar = myChar and myChar:FindFirstChild("HumanoidRootPart"), myChar and myChar:FindFirstChildOfClass("Humanoid"), GetTar()
+
+        if tar and tar:FindFirstChild("HumanoidRootPart") and cfg.Follow and myHum then myHum:MoveTo(tar.HumanoidRootPart.Position) end
+
+        for _, p in pairs(Players:GetPlayers()) do
+            if p ~= LP and p.Character then
+                local eHrp, eHead, eHum = p.Character:FindFirstChild("HumanoidRootPart"), p.Character:FindFirstChild("Head"), p.Character:FindFirstChildOfClass("Humanoid")
+                local isTeam, isFriend, valid = IsSameTeam(p), LP:IsFriendsWith(p.UserId), eHum and eHum.Health > 0
+                local pCustom = CustomTarget[p] or {Aimbot = true, Hitbox = true, Esp = true, Alias = ""}
+
+                if eHrp then
+                    if not valid or (cfg.HitTeam and isTeam) or (cfg.HitFriend and isFriend) or not cfg.Hitbox or not pCustom.Hitbox then
+                        eHrp.Size, eHrp.Transparency = Vector3.new(2, 2, 1), 1
+                    else
+                        local tSize = (eHum and (eHum.Sit or eHum:GetState() == Enum.HumanoidStateType.Seated)) and (cfg.Size * 0.3) or cfg.Size
+                        eHrp.Size, eHrp.Transparency, eHrp.Color, eHrp.Material, eHrp.CanCollide = Vector3.new(tSize, tSize, tSize), 0.6, Colors[cfg.ColorIdx], Enum.Material.ForceField, false
+                    end
+                end
+
+                local hl, bg = p.Character:FindFirstChild("GBHL"), eHead and eHead:FindFirstChild("GBESP")
+                local txt = bg and bg:FindFirstChild("Txt")
+                local showEsp = valid and pCustom.Esp and not ((cfg.EspTeam and isTeam) or (cfg.EspFriend and isFriend))
+                local teamColor = p.TeamColor and p.TeamColor.Color or Color3.fromRGB(255, 255, 255)
+
+                if hl then hl.Enabled, hl.FillColor, hl.OutlineColor, hl.FillTransparency = cfg.EspBox and showEsp, Color3.fromRGB(255, 255, 255), Color3.fromRGB(255, 255, 255), AlphaValues[cfg.EspBoxAlphaIdx] end
+
+                if bg and txt then
+                    if showEsp and (cfg.EspName or cfg.EspDist or cfg.EspHP) then
+                        bg.Enabled = true
+                        local hexColor = string.format("#%02X%02X%02X", math.floor(teamColor.R * 255), math.floor(teamColor.G * 255), math.floor(teamColor.B * 255))
+                        local t = {}
+                        if cfg.EspName then table.insert(t, string.format('<font color="%s">%s</font>', hexColor, (pCustom.Alias and pCustom.Alias ~= "") and (p.DisplayName .. " [" .. pCustom.Alias .. "]") or p.DisplayName)) end
+                        if cfg.EspHP then table.insert(t, string.format('<font color="#FFFFFF">❤️ %d/%d</font>', math.floor(eHum.Health), math.floor(eHum.MaxHealth))) end
+                        if cfg.EspDist and myHrp and eHrp then table.insert(t, string.format('<font color="#FFFFFF">📏 %dm</font>', math.floor((myHrp.Position - eHrp.Position).Magnitude))) end
+                        txt.Text = table.concat(t, "\n")
+                    else bg.Enabled = false end
+                end
+            end
+        end
+    end)
+end)
